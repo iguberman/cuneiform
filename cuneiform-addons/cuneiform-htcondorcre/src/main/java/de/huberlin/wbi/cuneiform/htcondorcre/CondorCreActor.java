@@ -29,22 +29,6 @@
 
 package de.huberlin.wbi.cuneiform.htcondorcre;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermissions;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 import de.huberlin.wbi.cuneiform.core.actormodel.Actor;
 import de.huberlin.wbi.cuneiform.core.cre.BaseCreActor;
 import de.huberlin.wbi.cuneiform.core.cre.TicketReadyMsg;
@@ -56,8 +40,22 @@ import de.huberlin.wbi.cuneiform.core.ticketsrc.TicketFailedMsg;
 import de.huberlin.wbi.cuneiform.core.ticketsrc.TicketFinishedMsg;
 import de.huberlin.wbi.cuneiform.core.ticketsrc.TicketSrcActor;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.file.*;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 public class CondorCreActor extends BaseCreActor {
 	public static final String VERSION = "2015-03-05-4";
+
+	public static final int MAX_TRANSFER = 1073741824; // no more than 1G of total transfer
 
 	private CondorWatcher watcher;
 
@@ -70,6 +68,7 @@ public class CondorCreActor extends BaseCreActor {
 
 	private final Path buildDir;
 	private final Path centralRepo;
+	private ExecutorService executor;
 
 	public CondorCreActor(Path buildDir) throws IOException {
 		// creates an actor for default jobs
@@ -92,7 +91,7 @@ public class CondorCreActor extends BaseCreActor {
 			Files.createDirectories(centralRepo);
 		}
 
-		ExecutorService executor;
+
 		executor = Executors.newCachedThreadPool();
 		// create a new condor watcher to watch for job status changes
 		watcher = new CondorWatcher(this);
@@ -271,7 +270,7 @@ public class CondorCreActor extends BaseCreActor {
 
 	@Override
 	protected void shutdown() {
-		// nothing
+		executor.shutdownNow();
 	}
 
 	private Set<JsonReportEntry> gatherReport(StatusMessage msg) {
@@ -354,6 +353,7 @@ public class CondorCreActor extends BaseCreActor {
 
 		// add input files
 		Set<String> inputs = new HashSet<>();
+		int total_size = 0;
 		for (String filename : invoc.getStageInList()) {
 			if( filename.charAt( 0 ) == '/' ){						
 				throw new UnsupportedOperationException( "Absolute path encountered '"+filename+"'." );
@@ -382,6 +382,7 @@ public class CondorCreActor extends BaseCreActor {
 			Files.createSymbolicLink( destPath, srcPath );
 			//add the path to the set to insert it in the submitfile later on
 			inputs.add(destPath.toString());
+			total_size += Files.size(srcPath);
 		}
 
 		try {
@@ -439,14 +440,20 @@ public class CondorCreActor extends BaseCreActor {
 				log.debug("condorError or condorOutput for "+ ticket.getTicketId() +" already exists.");
 			}
 		}
-		
-		
+
+		String universe="vanilla";
+		String should_transfer_files="YES";
+		if (total_size >= MAX_TRANSFER){
+			universe="local";
+			should_transfer_files="NO";
+		}
+
 		try (BufferedWriter writer = Files.newBufferedWriter(submitFile, cs,
 				StandardOpenOption.CREATE)) {
 			// name of the executable script
 			writer.write("executable = " + scriptFile.toString());
 			writer.write('\n');
-			writer.write("universe = vanilla");
+			writer.write("universe = " + universe);
 			writer.write('\n');
 			writer.write("run_as_owner = True");
 			writer.write('\n');
@@ -457,10 +464,10 @@ public class CondorCreActor extends BaseCreActor {
 			writer.write("error = " + condorError.toString());
 			writer.write('\n');
 			//TODO: Transfer files or not?
-			writer.write("should_transfer_files = YES \n");
+			writer.write("should_transfer_files = " + should_transfer_files + " \n");
 			writer.write("when_to_transfer_output = ON_EXIT \n");
 			// inputfiles
-			if (!inputs.isEmpty()) {
+			if (!inputs.isEmpty() && total_size < MAX_TRANSFER) {
 				writer.write("transfer_input_files = ");
 				boolean successor = false;
 				for (String file : inputs) {
