@@ -386,7 +386,7 @@ public class CondorCreActor extends BaseCreActor {
 
 		// add input files
 		Set<String> inputs = new HashSet<>();
-		int total_size = 0;
+		long total_size = 0;
 		for (String filename : invoc.getStageInList()) {
 			if( filename.charAt( 0 ) == '/' ){						
 				throw new UnsupportedOperationException( "Absolute path encountered '"+filename+"'." );
@@ -415,7 +415,14 @@ public class CondorCreActor extends BaseCreActor {
 			Files.createSymbolicLink( destPath, srcPath );
 			//add the path to the set to insert it in the submitfile later on
 			inputs.add(destPath.toString());
-			total_size += Files.size(srcPath);
+
+			Path target = srcPath;
+			int infLoopGuard = 10; // I think symbolic links can get self-referential
+			while(Files.isSymbolicLink(target) && infLoopGuard > 0){
+				infLoopGuard--;
+				target = Files.readSymbolicLink(target);
+;			}
+			total_size += Files.size(target);
 		}
 
 		try {
@@ -478,6 +485,7 @@ public class CondorCreActor extends BaseCreActor {
 		String should_transfer_files="YES";
 		String when_to_transfer_output = "when_to_transfer_output = ON_EXIT \n";
 		if (total_size >= maxTransferBytes){
+			log.info("Total size of files to be transferred exceeds the max transfer limit of " + maxTransferBytes + ". Running in the local universe...");
 			universe="local";
 			should_transfer_files="NO";
 			when_to_transfer_output = "\n";
