@@ -32,23 +32,6 @@
 
 package de.huberlin.wbi.cuneiform.core.cre;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermissions;
-import java.util.HashSet;
-import java.util.Set;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.json.JSONObject;
-
 import de.huberlin.wbi.cuneiform.core.actormodel.Message;
 import de.huberlin.wbi.cuneiform.core.invoc.Invocation;
 import de.huberlin.wbi.cuneiform.core.semanticmodel.JsonReportEntry;
@@ -56,11 +39,23 @@ import de.huberlin.wbi.cuneiform.core.semanticmodel.Ticket;
 import de.huberlin.wbi.cuneiform.core.ticketsrc.TicketFailedMsg;
 import de.huberlin.wbi.cuneiform.core.ticketsrc.TicketFinishedMsg;
 import de.huberlin.wbi.cuneiform.core.ticketsrc.TicketSrcActor;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.file.*;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.HashSet;
+import java.util.Set;
 
 public class LocalThread implements Runnable {
 	
 	private static final int WAIT_INTERVAL = 100;
-	private static final int MAX_TRIALS = 4;
+	private static final int MAX_TRIALS = 5;
 
 	private final Invocation invoc;
 	private final Log log;
@@ -256,8 +251,8 @@ public class LocalThread implements Runnable {
 					catch( IOException e ) {
 						
 						ex = e;
-						if( log.isWarnEnabled() )
-							log.warn( "Unable to start process on trial "+( trial++ )+" Waiting "+WAIT_INTERVAL+"ms: "+e.getMessage() );
+						if( log.isWarnEnabled() && trial > 1) // one retry is normal, 2 is a WARN
+							log.warn( "Retrying "+ ( ++trial ) +"th time. Waiting "+WAIT_INTERVAL+"ms: "+e.getMessage() );
 						Thread.sleep( WAIT_INTERVAL );
 					}
 				} while( suc == false && trial <= MAX_TRIALS );

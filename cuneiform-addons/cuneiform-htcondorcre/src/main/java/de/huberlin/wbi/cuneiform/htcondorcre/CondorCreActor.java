@@ -55,8 +55,6 @@ import java.util.concurrent.Executors;
 public class CondorCreActor extends BaseCreActor {
 	public static final String VERSION = "2015-03-05-4";
 
-	public static final int MAX_TRANSFER = 1073741824; // no more than 1G of total transfer
-
 	private CondorWatcher watcher;
 
 	private static final String PATH_CENTRALREPO = "repo";
@@ -69,6 +67,41 @@ public class CondorCreActor extends BaseCreActor {
 	private final Path buildDir;
 	private final Path centralRepo;
 	private ExecutorService executor;
+
+	private long maxTransferBytes = Unit.G.bytes;
+
+	//htcondor max file transfer size, T isn't even here because transfering Terabytes of data makes no sense.
+	public static enum Unit{
+		G(1073741824),
+		M(1048576),
+		K(1024);
+
+		private final long bytes;
+
+		Unit(long bytes){
+			this.bytes = bytes;
+		}
+
+		protected long convert(double numUnits){
+				return Math.round(numUnits * this.bytes);
+		}
+
+		protected static long convertToBytes(String in){
+			try{
+				return Long.valueOf(in);
+			}
+			catch(Exception e) {
+				Unit u = valueOf(in.substring(in.length() - 1).toUpperCase());
+				double numUnits = Double.valueOf(in.substring(0, in.length() - 1));
+				return u.convert(numUnits);
+			}
+		}
+	}
+
+	public CondorCreActor(Path buildDir, String maxTransferBytes) throws Exception{
+		this(buildDir);
+		this.maxTransferBytes = Unit.convertToBytes(maxTransferBytes);
+	}
 
 	public CondorCreActor(Path buildDir) throws IOException {
 		// creates an actor for default jobs
@@ -443,9 +476,11 @@ public class CondorCreActor extends BaseCreActor {
 
 		String universe="vanilla";
 		String should_transfer_files="YES";
-		if (total_size >= MAX_TRANSFER){
+		String when_to_transfer_output = "when_to_transfer_output = ON_EXIT \n";
+		if (total_size >= maxTransferBytes){
 			universe="local";
 			should_transfer_files="NO";
+			when_to_transfer_output = "\n";
 		}
 
 		try (BufferedWriter writer = Files.newBufferedWriter(submitFile, cs,
@@ -465,9 +500,9 @@ public class CondorCreActor extends BaseCreActor {
 			writer.write('\n');
 			//TODO: Transfer files or not?
 			writer.write("should_transfer_files = " + should_transfer_files + " \n");
-			writer.write("when_to_transfer_output = ON_EXIT \n");
+			writer.write(when_to_transfer_output);
 			// inputfiles
-			if (!inputs.isEmpty() && total_size < MAX_TRANSFER) {
+			if (!inputs.isEmpty() && total_size < maxTransferBytes) {
 				writer.write("transfer_input_files = ");
 				boolean successor = false;
 				for (String file : inputs) {
@@ -522,8 +557,8 @@ public class CondorCreActor extends BaseCreActor {
 				suc = true;
 			} catch (IOException e) {
 				ex = e;
-				if (log.isWarnEnabled())
-					log.warn("Unable to start process on trial " + (trial++)
+				if (log.isWarnEnabled() && trial > 1)
+					log.warn("Retrying " + (++trial) + "th time."
 							+ " Waiting " + WAIT_INTERVAL + "ms: "
 							+ e.getMessage());
 				Thread.sleep(WAIT_INTERVAL);
